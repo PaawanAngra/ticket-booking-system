@@ -30,7 +30,6 @@ class User(UserBase):
 class BookingCreate(BaseModel):
     event_id: int
     user_id: int
-    seat_number: int
 
 class Booking(BookingCreate):
     id: int
