@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker
 
 SQLALCHEMY_DATABASE_URL = "postgresql://user:password@localhost:5432/ticket_booking"
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_size=100)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
