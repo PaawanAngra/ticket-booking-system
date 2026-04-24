@@ -2,20 +2,26 @@ from fastapi import FastAPI, Depends, HTTPException
 from contextlib import asynccontextmanager
 from . import database, models, schemas, redis_client
 from sqlalchemy import func
+import uuid
 
 @asynccontextmanager
 async def lifespan(app : FastAPI):
     r = redis_client.get_redis()
     gen = database.get_db()
     db = next(gen)
-    events = db.query(models.Events).all()
-    for event in events:
-        id = event.id
-        available_tickets = event.total_tickets - db.query(func.count(models.Bookings.id)).filter(models.Bookings.event_id == id).scalar()
-        event.available_tickets = available_tickets
-        flag = r.set(f"events:{id}", available_tickets)
-        if flag:
-            print(f"Successfully set {event.name} to {event.available_tickets}")
+    try:
+        events = db.query(models.Events).all()
+        for event in events:
+            id = event.id
+            available_tickets = event.total_tickets - db.query(func.count(models.Bookings.id)).filter(models.Bookings.event_id == id).scalar()
+            event.available_tickets = available_tickets
+            flag = r.set(f"events:{id}", available_tickets)
+            if flag:
+                print(f"Successfully set {event.name} to {event.available_tickets}")
+    except:
+        raise HTTPException(status_code= 500, detail = "Server couldn't start")
+    finally:
+        db.close()
     yield
     events = db.query(models.Events).all()
     for event in events:
@@ -48,15 +54,23 @@ def get_specific_event(event_id : int, db = Depends(database.get_db)):
 @app.post('/book', response_model = schemas.Booking)
 def create_booking(booking : schemas.BookingCreate, db = Depends(database.get_db), r = Depends(redis_client.get_redis)):
     key = f"events:{booking.event_id}"
+    if not r.get(key):
+        event = db.query(models.Events).filter(models.Events.id == booking.event_id).first()
+        if not event:
+            raise HTTPException(status_code=400, detail= "No such event")
+        tickets_booked = db.query(func.count(models.Bookings.id)).filter(models.Bookings.event_id == booking.event_id).scalar()
+        available_tickets = event.total_tickets - tickets_booked
+        r.set(key, available_tickets, nx = True)
     remaining = r.decr(key)
     if remaining < 0:
         r.incr(key)
-        raise HTTPException(status_code=400, detail = "Sold out! or Event doesn't exist")
+        raise HTTPException(status_code=400, detail = "Sold out!")
     try:
         new_booking = models.Bookings(user_id = booking.user_id, event_id = booking.event_id, seat_number = remaining + 1)
         db.add(new_booking)
         db.commit()
         db.refresh(new_booking)
+        db.commit()
         return new_booking
     except Exception as e:
         r.incr(key)
